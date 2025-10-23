@@ -1,0 +1,73 @@
+variable,meaning,data_type,typical_values_or_units,relevance
+sample,Full TCGA RNA-seq sample barcode,string,e.g. TCGA-AB-1234-01A-11R,Unique sample identifier
+cancer_type,TCGA tumor type abbreviation,string,"BRCA, LUAD, COAD, etc.",Cancer project code
+bcr_patient_barcode,TCGA patient ID (first 12 chars of barcode),string,e.g. TCGA-AB-1234,Patient-level identifier
+bcr_patient_uuid,UUID assigned to the TCGA patient record,string,UUID format,Alternate unique ID
+patient_id,Internal patient identifier (redundant with barcode),string,e.g. TCGA-XX-XXXX,Identifier
+gender,Patient sex,categorical,Male / Female,Demographic
+race,Self-identified race,categorical,White / Black / Asian / Other,Demographic
+ethnicity,Hispanic or Latino origin,categorical,Hispanic or Latino / Not Hispanic or Latino / Unknown,Demographic
+age_at_diagnosis,Age (years) at diagnosis,integer,e.g. 55,Demographic
+age_at_initial_pathologic_diagnosis,Age at pathologic diagnosis,integer,Years,Demographic
+birth_days_to,Days between birth and sample collection (negative),integer,e.g. -20000,Derived age variable
+last_contact_days_to,Days to last contact,integer,Days,Follow-up timing
+death_days_to,Days to death,integer,Days,Overall survival metric
+clinical_stage,Clinical AJCC stage,categorical,Stage I–IV,Tumor staging
+clinical_T,Clinical primary tumor (T),categorical,T1–T4,Tumor staging
+clinical_N,Clinical lymph node status (N),categorical,N0–N3,Tumor staging
+clinical_M,Clinical metastasis (M),categorical,M0 / M1,Tumor staging
+ajcc_pathologic_tumor_stage,Pathologic tumor stage (AJCC),categorical,Stage I–IV,Tumor staging
+ajcc_staging_edition,AJCC staging edition used,categorical,6th / 7th,Tumor staging
+ajcc_nodes_pathologic_pn,Pathologic lymph node status (N),categorical,N0–N3,Tumor staging
+ajcc_metastasis_pathologic_pm,Pathologic metastasis status (M),categorical,M0 / M1,Tumor staging
+ajcc_tumor_pathologic_pt,Pathologic primary tumor status (T),categorical,T1–T4,Tumor staging
+pathologic_stage,Overall pathological stage,categorical,Stage I–IV,Tumor staging
+ajcc_clinical_tumor_stage,AJCC clinical tumor substage,categorical,"Stage IA, IB, etc.",Tumor staging
+tumor_status,Status of primary tumor at last follow-up,categorical,With Tumor / Tumor Free,Clinical outcome
+tumor_type,Detailed TCGA tumor type,string,"e.g. Adenocarcinoma, Glioblastoma",Tumor classification
+histologic_diagnosis,Pathologist-confirmed histologic diagnosis,string,e.g. Invasive ductal carcinoma,Tumor classification
+neoplasm_histologic_grade,Histologic grade,categorical,G1–G4,Tumor grade
+tumor_grade,Histologic grade (redundant),categorical,G1–G4,Tumor grade
+nuclear_grade_III_IV,High nuclear grade indicator,categorical,III / IV,Tumor grade
+residual_tumor,Residual tumor after surgery,categorical,"R0, R1, R2",Surgical outcome
+residual_disease_largest_nodule,Size of largest residual nodule,float,cm,Surgical outcome
+vital_status,Alive or Dead at last contact,categorical,Alive / Dead,Survival outcome
+days_to_death,Days from diagnosis to death,integer,Days,Survival outcome
+days_to_last_followup,Days from diagnosis to last follow-up,integer,Days,Survival outcome
+tissue_source_site,TCGA tissue source site code,string,"e.g. 02, 06",Sample origin
+tissue_source_site.1,Duplicate or updated tissue source code,string,"e.g. 02, 06",Sample origin
+tumor_tissue_site,Site of primary tumor,string,"e.g. Lung, Breast",Sample origin
+tumor_site,Detailed tumor site,string,e.g. Left lung lower lobe,Anatomical site
+anatomic_neoplasm_subdivision,Sub-region of organ involved,string,e.g. Upper lobe,Anatomical site
+anatomic_neoplasm_subdivision_other,Other anatomic subdivision description,string,Free text,Anatomical site
+submitted_tumor_site,Reported tumor site from submitting center,string,Free text,Anatomical site
+metastatic_tumor_site,Site of metastasis (if any),string,"e.g. Liver, Lung, Brain",Metastasis info
+metastatic_tumor_site.1,Additional metastatic site,string,e.g. Bone,Metastasis info
+history_other_malignancy,History of other primary cancers,categorical,Yes / No,Medical history
+history_thyroid_disease,History of thyroid disease,categorical,Yes / No,Medical history
+history_thyroid_disease_other,Type of thyroid disease (if specified),string,e.g. Hypothyroidism,Medical history
+history_reflux_disease_indicator,Gastroesophageal reflux disease indicator,categorical,Yes / No,Medical history
+history_exposure_leukemogenic_agents,Exposure to leukemogenic agents (e.g. chemo/radiation),categorical,Yes / No,Exposure history
+history_neoadjuvant_treatment,Received neoadjuvant therapy before surgery,categorical,Yes / No,Treatment history
+radiation_treatment_adjuvant,Received adjuvant radiation therapy,categorical,Yes / No,Treatment history
+treatment_outcome_first_course,Outcome of first treatment course,categorical,CR / PR / SD / PD,Treatment outcome
+pharmaceutical_tx_adjuvant,Received adjuvant drug therapy,categorical,Yes / No,Treatment history
+platelet_count,Platelet count at diagnosis,float,×10⁹/L,Clinical lab
+platelet_count_preresection,Platelet count before surgical resection,float,×10⁹/L,Clinical lab
+platelet_norm_range_lower,Lower bound of normal platelet range,float,×10⁹/L,Clinical lab
+platelet_norm_range_upper,Upper bound of normal platelet range,float,×10⁹/L,Clinical lab
+icd_o_3_site,ICD-O-3 tumor site code,string,"C50.9, C34.1, etc.",Standardized coding
+icd_o_3_histology,ICD-O-3 histology code,string,"8140/3, etc.",Standardized coding
+icd_10,ICD-10 diagnosis code,string,"C50, C34, etc.",Standardized coding
+disease_code,TCGA disease code abbreviation,string,"BRCA, LUAD, etc.",Cancer project code
+project_code,TCGA project code,string,TCGA,Dataset source
+ajcc_pathologic_t,Pathologic T classification (tumor size),categorical,T1–T4,Tumor staging
+history_hormonal_contraceptives_use,History of hormonal contraceptive use,categorical,Yes / No,Reproductive history
+pregnancies_count_miscarriage,Number of miscarriages,integer,Count,Reproductive history
+jewish_religion_heritage_indicator,Self-identified Jewish heritage,categorical,Yes / No,Demographic/cultural
+tobacco_smoking_age_started,Age started smoking,integer,Years,Exposure history
+family_history_cancer_type,Type(s) of cancer in family history,string,"e.g. Breast, Lung",Family history
+tumor_response,Clinical or pathologic tumor response,categorical,CR / PR / SD / PD,Treatment outcome
+ecog_score,ECOG performance status,integer,0–5,Clinical performance
+lymph_nodes_examined_count,Number of lymph nodes examined,integer,Count,Pathology
+residual_tumor,Residual tumor after surgery,categorical,R0 / R1 / R2,Pathology
