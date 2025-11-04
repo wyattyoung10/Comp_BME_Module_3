@@ -10,7 +10,7 @@
 # GSE62944 pan-cancer subset (protein-coding, clean, stratified, compact)
 # -----------------------------------------------------------------------
 # Requires: Python 3.9+, pandas, numpy
-#   pip install pandas numpy
+# pip install pandas numpy
 # %%
 import os
 import io
