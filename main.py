@@ -186,6 +186,110 @@ if len(plot_vars) >= 2:
 else:
     print("Not enough genes present to compute correlations.")
 
+# ================================
+# Classification: LUAD vs LUSC using Logistic Regression
+# ================================
+from sklearn.model_selection import train_test_split
+from sklearn.preprocessing import StandardScaler, LabelEncoder
+from sklearn.pipeline import Pipeline
+from sklearn.linear_model import LogisticRegression
+from sklearn.metrics import (
+    accuracy_score, f1_score, roc_auc_score, average_precision_score,
+    RocCurveDisplay, PrecisionRecallDisplay, ConfusionMatrixDisplay
+)
+import numpy as np
+import pandas as pd
+import matplotlib.pyplot as plt
+
+# --- Select features present in df ---
+feature_list = ["TP53", "VEGFA", "HIF1A", "ANGPT2", "FLT1"]
+features = [c for c in feature_list if c in df.columns]
+if len(features) < 2:
+    raise ValueError(f"Need ≥2 features; found {features}")
+
+# --- Build X, y and drop rows with missing values in these columns ---
+data_ml = df.dropna(subset=features + ["cancer_type"]).copy()
+X = data_ml[features]
+y = data_ml["cancer_type"]
+
+# Encode labels -> 0/1
+le = LabelEncoder()
+y_enc = le.fit_transform(y)   # LUAD/LUSC -> 0/1
+
+# --- Train/test split (stratified) ---
+X_tr, X_te, y_tr, y_te = train_test_split(
+    X, y_enc, test_size=0.2, stratify=y_enc, random_state=42
+)
+
+# --- Pipeline: scale -> logistic regression (elastic-net off for simplicity here) ---
+pipe = Pipeline([
+    ("scaler", StandardScaler()),
+    ("clf", LogisticRegression(
+        penalty="l2", solver="lbfgs", max_iter=5000, n_jobs=-1
+    ))
+])
+
+# Fit
+pipe.fit(X_tr, y_tr)
+
+# Predict
+y_pred = pipe.predict(X_te)
+# Prob scores for curves
+try:
+    y_score = pipe.predict_proba(X_te)[:, 1]
+except AttributeError:
+    y_score = pipe.decision_function(X_te)
+
+# --- Metrics ---
+acc  = accuracy_score(y_te, y_pred)
+f1   = f1_score(y_te, y_pred)
+auc  = roc_auc_score(y_te, y_score)
+aupr = average_precision_score(y_te, y_score)
+
+print("\n=== Logistic Regression (5-gene panel) — Test set ===")
+print(f"Accuracy: {acc:.3f}")
+print(f"F1-score: {f1:.3f}")
+print(f"ROC AUC : {auc:.3f}")
+print(f"PR  AUC : {aupr:.3f}")
+
+# --- Plots: ROC, PR, Confusion Matrix ---
+fig, ax = plt.subplots(1, 3, figsize=(18, 5))
+RocCurveDisplay.from_predictions(y_te, y_score, name="LogReg", ax=ax[0])
+ax[0].set_title("ROC Curve")
+
+PrecisionRecallDisplay.from_predictions(y_te, y_score, name="LogReg", ax=ax[1])
+ax[1].set_title("Precision–Recall Curve")
+
+ConfusionMatrixDisplay.from_predictions(
+    y_te, y_pred, normalize="true", display_labels=le.classes_, ax=ax[2]
+)
+ax[2].set_title("Confusion Matrix (normalized)")
+plt.tight_layout()
+plt.show()
+
+# --- Coefficient inspection (interpretability) ---
+# Recover fitted scaler + coefficients
+scaler = pipe.named_steps["scaler"]
+clf    = pipe.named_steps["clf"]
+
+coef = clf.coef_[0]
+# Because we scaled, coefficients are comparable across features
+coef_tbl = pd.DataFrame({"feature": features, "coef": coef, "abs_coef": np.abs(coef)})
+coef_tbl = coef_tbl.sort_values("abs_coef", ascending=False)
+
+print("\nTop features by |coefficient|:")
+print(coef_tbl[["feature","coef"]].to_string(index=False))
+
+# Plot top coefficients
+top_n = min(10, len(features))
+top = coef_tbl.head(top_n).sort_values("coef")  # sort for nice barh
+plt.figure(figsize=(7, 5))
+plt.barh(top["feature"], top["coef"])
+plt.xlabel("Coefficient (standardized features)")
+plt.title("Logistic Regression — Top Coefficients")
+plt.tight_layout()
+plt.show()
+
 # --- Optional linear model (VEGFA ~ TP53 + subtype), only if both present ---
 try:
     import statsmodels.api as sm
@@ -222,6 +326,135 @@ if "patient_id" in df.columns:
 
 df[out_cols].to_csv("lung_TP53_angiogenesis_ready.csv")
 print("Saved: lung_TP53_angiogenesis_ready.csv")
+
+# ==== COMPLETE, SELF-CONTAINED COMPARISON + ROC (no external deps) ====
+
+# Imports
+from sklearn.model_selection import train_test_split, GridSearchCV
+from sklearn.preprocessing import StandardScaler
+from sklearn.pipeline import Pipeline
+from sklearn.feature_selection import SelectKBest, f_classif
+from sklearn.linear_model import LogisticRegression
+from sklearn.ensemble import GradientBoostingClassifier, RandomForestClassifier
+from sklearn.metrics import (
+    RocCurveDisplay, PrecisionRecallDisplay,
+    roc_auc_score, average_precision_score,
+    accuracy_score, f1_score, confusion_matrix
+)
+import numpy as np
+import matplotlib.pyplot as plt
+import seaborn as sns
+import pandas as pd
+
+# 1) Build X, y from df safely (in case some genes were missing earlier)
+gene_panel = [g for g in ["TP53","VEGFA","HIF1A","ANGPT2","FLT1"] if g in df.columns]
+if len(gene_panel) < 2:
+    raise ValueError(f"Need ≥2 genes for modeling, found: {gene_panel}")
+
+X = df[gene_panel].values
+# Make LUSC = 1 (positive), LUAD = 0 (negative)
+y = (df["cancer_type"].values == "LUSC").astype(int)
+
+# 2) Train/val split
+X_train, X_test, y_train, y_test = train_test_split(
+    X, y, test_size=0.2, stratify=y, random_state=42
+)
+
+# 3) Define three models (Elastic-Net LogReg, GradBoost, RandomForest)
+logreg_pipe = Pipeline([
+    ("scaler", StandardScaler()),
+    ("kbest", SelectKBest(score_func=f_classif, k=min(300, X_train.shape[1]))),
+    ("clf", LogisticRegression(
+        penalty="elasticnet", solver="saga",
+        max_iter=5000, random_state=42
+    )),
+])
+
+logreg_param = {
+    "clf__C": [0.1, 0.3, 1.0, 3.0],
+    "clf__l1_ratio": [0.2, 0.5, 0.8],
+    # you can keep k fixed since we only have 5 features; left here for completeness
+    "kbest__k": [X_train.shape[1]]
+}
+
+gb_pipe = Pipeline([
+    ("scaler", StandardScaler()),
+    ("kbest", SelectKBest(score_func=f_classif, k=min(300, X_train.shape[1]))),
+    ("clf", GradientBoostingClassifier(random_state=42))
+])
+gb_param = {
+    "clf__n_estimators": [150, 200],
+    "clf__learning_rate": [0.05, 0.1],
+    "clf__max_depth": [2, 3],
+    "kbest__k": [X_train.shape[1]]
+}
+
+rf_pipe = Pipeline([
+    ("scaler", StandardScaler()),                 # harmless for tree models
+    ("kbest", SelectKBest(score_func=f_classif, k=min(300, X_train.shape[1]))),
+    ("clf", RandomForestClassifier(
+        n_estimators=300, max_depth=None, random_state=42, n_jobs=1  # n_jobs=1 avoids macOS warnings
+    ))
+])
+# With only 5 genes, RF grid can be tiny or omitted
+rf_param = {
+    "clf__n_estimators": [200, 300, 500],
+    "clf__max_depth": [None, 3, 5],
+    "kbest__k": [X_train.shape[1]]
+}
+
+# 4) Fit with small GridSearchCV (n_jobs=1 to avoid child-process noise on macOS)
+def fit_model(name, pipe, param_grid):
+    gs = GridSearchCV(
+        pipe, param_grid=param_grid,
+        scoring="roc_auc", cv=5, n_jobs=1, verbose=0
+    )
+    gs.fit(X_train, y_train)
+    print(f"\n=== {name} ===")
+    print(f"Best CV ROC AUC: {gs.best_score_:.4f}")
+    print(f"Best params: {gs.best_params_}")
+    return gs.best_estimator_
+
+best_logreg     = fit_model("Elastic-Net Logistic Regression", logreg_pipe, logreg_param)
+best_gradboost  = fit_model("Gradient Boosting", gb_pipe, gb_param)
+best_rf         = fit_model("Random Forest", rf_pipe, rf_param)
+
+# 5) Evaluate on the test set
+def eval_model(name, model):
+    y_proba = model.predict_proba(X_test)[:, 1] if hasattr(model, "predict_proba") else model.decision_function(X_test)
+    y_pred  = (y_proba >= 0.5).astype(int)
+    acc = accuracy_score(y_test, y_pred)
+    f1  = f1_score(y_test, y_pred)
+    auc = roc_auc_score(y_test, y_proba)
+    ap  = average_precision_score(y_test, y_proba)
+    print(f"\n=== {name} — Test set ===")
+    print(f"Accuracy: {acc:.3f}\nF1-score: {f1:.3f}\nROC AUC : {auc:.3f}\nPR  AUC : {ap:.3f}")
+    return y_proba, y_pred
+
+proba_logreg,  _ = eval_model("Elastic-Net LogReg", best_logreg)
+proba_gb,      _ = eval_model("GradBoost", best_gradboost)
+proba_rf,      _ = eval_model("RandomForest", best_rf)
+
+# 6) Plot all ROC curves together
+plt.figure(figsize=(7,6))
+RocCurveDisplay.from_predictions(y_test, proba_logreg, name="ElasticNet")
+RocCurveDisplay.from_predictions(y_test, proba_gb,     name="GradBoost")
+RocCurveDisplay.from_predictions(y_test, proba_rf,     name="RandomForest")
+plt.title("Model Comparison — ROC Curves")
+plt.tight_layout()
+plt.show()
+
+# 7) (Optional) Confusion matrix for the winner (change model as you like)
+winner = best_gradboost  # or best_logreg / best_rf
+y_pred = winner.predict(X_test)
+cm = confusion_matrix(y_test, y_pred, normalize="true")
+plt.figure(figsize=(4.5,4))
+sns.heatmap(cm, annot=True, cmap="viridis", cbar=True,
+            xticklabels=["LUAD","LUSC"], yticklabels=["LUAD","LUSC"],
+            fmt=".2f")
+plt.title("Confusion Matrix (normalized)")
+plt.xlabel("Predicted label"); plt.ylabel("True label")
+plt.tight_layout(); plt.show()
 
 # ================================
 # Supervised task: LUAD vs LUSC (genome-wide/top-k with CV)
@@ -352,46 +585,3 @@ ConfusionMatrixDisplay.from_predictions(y_te, y_pred, normalize="true", display_
 ax[2].set_title("Confusion Matrix (normalized)")
 plt.tight_layout()
 plt.show()
-
-# ---------------------------
-# Feature importance plot (top 20)
-# ---------------------------
-def plot_top_features(estimator, Xframe, title, top_n=20):
-    # Recover selected feature names after SelectKBest
-    if "kbest" in estimator.named_steps:
-        support_idx = estimator.named_steps["kbest"].get_support(indices=True)
-        selected_cols = Xframe.columns[support_idx]
-    else:
-        selected_cols = Xframe.columns
-
-    if "clf" in estimator.named_steps:
-        clf = estimator.named_steps["clf"]
-    else:
-        clf = estimator  # in case the pipeline is different
-
-    # Logistic: use absolute coefficients
-    if hasattr(clf, "coef_"):
-        vals = np.abs(clf.coef_[0])
-        names = selected_cols
-
-    # Tree-based: use feature_importances_
-    elif hasattr(clf, "feature_importances_"):
-        vals = clf.feature_importances_
-        names = selected_cols
-    else:
-        print("No feature importances/coefficients found for this model.")
-        return
-
-    order = np.argsort(vals)[-top_n:][::-1]
-    top_names = names[order]
-    top_vals = vals[order]
-
-    plt.figure(figsize=(8, 6))
-    plt.barh(range(len(top_names)), top_vals[::-1])
-    plt.yticks(range(len(top_names)), top_names[::-1], fontsize=8)
-    plt.xlabel("Importance (|coef| or impurity)")
-    plt.title(title)
-    plt.tight_layout()
-    plt.show()
-
-plot_top_features(winner, X_tr, f"Top features — {winner_name}", top_n=20)
