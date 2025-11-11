@@ -13,7 +13,12 @@ sns.set(context="notebook", style="whitegrid")
 
 # ==== EDIT THESE PATHS ====
 PATH_META = "GSE62944_metadata.csv"  # sample-level metadata (in repo)
-PATH_EXPR = "/Users/wyattyoung/Desktop/GSE62944_subsample_log2TPM.csv"  # expression on Desktop
+
+# Training expression matrix (original)
+PATH_EXPR = "C:/Users/james/OneDrive/Documents/GitHub/Comp_BME_Module_3/Comp_BME_Module_3/GSE62944_subsample_log2TPM.csv"
+
+# External TEST set expression matrix (Module 3 TEST_SET file)
+PATH_EXPR_TEST = "C:/Users/james/OneDrive/Documents/GitHub/Comp_BME_Module_3/Comp_BME_Module_3/TEST_SET_GSE62944_subsample_log2TPM.csv"
 
 # Choose your gene set
 ANGIO_GENES = ["VEGFA", "HIF1A", "ANGPT2", "FLT1"]  # add KDR, PGF, etc. if you like
@@ -23,7 +28,9 @@ TP53_GENE = "TP53"
 if not os.path.exists(PATH_META):
     raise FileNotFoundError(f"Metadata not found: {PATH_META}")
 if not os.path.exists(PATH_EXPR):
-    raise FileNotFoundError(f"Expression file not found: {PATH_EXPR}")
+    raise FileNotFoundError(f"Training expression file not found: {PATH_EXPR}")
+if not os.path.exists(PATH_EXPR_TEST):
+    raise FileNotFoundError(f"Test expression file not found: {PATH_EXPR_TEST}")
 
 # --- Load metadata & standardize columns ---
 meta = pd.read_csv(PATH_META)
@@ -458,8 +465,9 @@ plt.tight_layout(); plt.show()
 
 # ================================
 # Supervised task: LUAD vs LUSC (genome-wide/top-k with CV)
+# using external TEST_SET expression matrix
 # ================================
-from sklearn.model_selection import train_test_split, StratifiedKFold, GridSearchCV
+from sklearn.model_selection import StratifiedKFold, GridSearchCV
 from sklearn.pipeline import Pipeline
 from sklearn.preprocessing import StandardScaler, LabelEncoder
 from sklearn.feature_selection import SelectKBest, mutual_info_classif
@@ -469,29 +477,68 @@ from sklearn.metrics import (
     roc_auc_score, average_precision_score, accuracy_score, f1_score,
     RocCurveDisplay, PrecisionRecallDisplay, ConfusionMatrixDisplay
 )
-import numpy as np
-import pandas as pd
-import matplotlib.pyplot as plt
 
-# X = samples x genes; y = labels aligned to X.index
-X = lung_expr.T.copy()
-y = lung_meta.set_index("sample_id").loc[X.index, "cancer_type"].copy()
+# ---------- Load & align TEST set ----------
+# We already have:
+#   - meta, lung_meta (training metadata)
+#   - lung_expr (training expression, genes x samples)
+#   - normalize_gene_index()
 
-# encode LUAD/LUSC -> 0/1
-le = LabelEncoder()
-y_enc = le.fit_transform(y)
+# Load header just to get columns
+test_header = pd.read_csv(PATH_EXPR_TEST, nrows=0)
+test_cols = test_header.columns.tolist()
+gene_col_test = test_cols[0]  # gene ID column
 
-# Train/test split
-X_tr, X_te, y_tr, y_te = train_test_split(
-    X, y_enc, test_size=0.2, stratify=y_enc, random_state=42
+# lung_ids were defined earlier as ALL LUAD/LUSC sample_ids from metadata
+# (before filtering to expression)
+test_keep_cols = [gene_col_test] + [c for c in test_cols if c in lung_ids]
+
+if len(test_keep_cols) <= 1:
+    print("Example lung sample IDs:", list(lung_meta["sample_id"].head(5)))
+    print("Example TEST expr columns:", test_cols[:8])
+    raise ValueError(
+        "None of the LUAD/LUSC sample IDs matched columns in the TEST_SET file.\n"
+        "Check that sample_id format matches TEST_SET column headers."
+    )
+
+print(
+    f"Loading TEST expression with {len(test_keep_cols)-1} lung samples "
+    f"out of {len(test_cols)-1} total columns..."
 )
+test_expr = pd.read_csv(PATH_EXPR_TEST, usecols=test_keep_cols).set_index(gene_col_test)
+test_expr.index = normalize_gene_index(test_expr.index)
 
-# 5-fold stratified CV
+# Test metadata: LUAD/LUSC samples that appear in the test expression matrix
+test_samples = [c for c in test_expr.columns if c in lung_ids]
+test_meta = meta[meta["sample_id"].isin(test_samples) & meta["cancer_type"].isin(["LUAD", "LUSC"])].copy()
+
+print(f"TEST_SET genes: {test_expr.shape[0]:,}, lung samples: {test_expr.shape[1]:,}")
+
+# ---------- Build matched train/test matrices (samples x genes) ----------
+# Make sure we only use genes present in BOTH train and test
+common_genes = lung_expr.index.intersection(test_expr.index)
+print(f"Common genes between train and test: {len(common_genes):,}")
+
+X_tr = lung_expr.loc[common_genes].T   # samples x genes
+X_te = test_expr.loc[common_genes].T   # samples x genes
+
+# Align labels
+y_tr = lung_meta.set_index("sample_id").loc[X_tr.index, "cancer_type"]
+y_te = test_meta.set_index("sample_id").loc[X_te.index, "cancer_type"]
+
+print("Training label counts:\n", y_tr.value_counts())
+print("TEST label counts:\n", y_te.value_counts())
+
+# Encode LUAD/LUSC -> 0/1
+le = LabelEncoder()
+y_tr_enc = le.fit_transform(y_tr)
+y_te_enc = le.transform(y_te)
+print("Label encoding:", dict(zip(le.classes_, le.transform(le.classes_))))
+
+# ---------- CV setup on TRAINING data only ----------
 cv = StratifiedKFold(n_splits=5, shuffle=True, random_state=42)
 
-# ---------------------------
 # Model 1: Elastic-Net Logistic Regression
-# ---------------------------
 logit_pipe = Pipeline([
     ("scaler", StandardScaler(with_mean=False)),
     ("kbest", SelectKBest(score_func=mutual_info_classif, k=500)),
@@ -501,87 +548,89 @@ logit_pipe = Pipeline([
     ))
 ])
 
-logit_grid = {
-    "kbest__k": [100, 300, 500, 1000],
-    "clf__C": [0.1, 1.0, 3.0],
-    "clf__l1_ratio": [0.0, 0.2, 0.5, 0.8],  # 0=ridge-ish, 1=lasso-ish
-}
-
-logit_search = GridSearchCV(
-    estimator=logit_pipe, param_grid=logit_grid, cv=cv,
-    scoring="roc_auc", n_jobs=-1, refit=True
-)
-logit_search.fit(X_tr, y_tr)
-print("\n=== Elastic-Net Logistic Regression ===")
-print("Best CV ROC AUC:", round(logit_search.best_score_, 4))
-print("Best params:", logit_search.best_params_)
-
-# ---------------------------
 # Model 2: Gradient Boosting
-# ---------------------------
 gb_pipe = Pipeline([
     ("kbest", SelectKBest(score_func=mutual_info_classif, k=500)),
     ("clf", GradientBoostingClassifier(random_state=42))
 ])
 
+# Make sure kbest__k never exceeds number of genes
+n_feats = X_tr.shape[1]
+logit_k_options = [k for k in [100, 300, 500, 1000] if k <= n_feats]
+gb_k_options    = [k for k in [100, 300, 500] if k <= n_feats]
+
+logit_grid = {
+    "kbest__k": logit_k_options,
+    "clf__C": [0.1, 1.0, 3.0],
+    "clf__l1_ratio": [0.0, 0.2, 0.5, 0.8],  # 0=ridge-ish, 1=lasso-ish
+}
+
 gb_grid = {
-    "kbest__k": [100, 300, 500],
+    "kbest__k": gb_k_options,
     "clf__learning_rate": [0.05, 0.1],
     "clf__n_estimators": [100, 200],
     "clf__max_depth": [2, 3],
 }
 
+# ---------- Fit on TRAINING set (with 5-fold CV) ----------
+logit_search = GridSearchCV(
+    estimator=logit_pipe, param_grid=logit_grid, cv=cv,
+    scoring="roc_auc", n_jobs=-1, refit=True
+)
+logit_search.fit(X_tr, y_tr_enc)
+print("\n=== Elastic-Net Logistic Regression (TRAIN CV) ===")
+print("Best CV ROC AUC:", round(logit_search.best_score_, 4))
+print("Best params:", logit_search.best_params_)
+
 gb_search = GridSearchCV(
     estimator=gb_pipe, param_grid=gb_grid, cv=cv,
     scoring="roc_auc", n_jobs=-1, refit=True
 )
-gb_search.fit(X_tr, y_tr)
-print("\n=== Gradient Boosting ===")
+gb_search.fit(X_tr, y_tr_enc)
+print("\n=== Gradient Boosting (TRAIN CV) ===")
 print("Best CV ROC AUC:", round(gb_search.best_score_, 4))
 print("Best params:", gb_search.best_params_)
 
-# ---------------------------
-# Pick winner by CV AUC & evaluate on test
-# ---------------------------
+# ---------- Pick winner by CV AUC ----------
 candidates = [
     ("ElasticNet-LogReg", logit_search),
     ("GradBoost", gb_search),
 ]
 winner_name, winner_search = max(candidates, key=lambda t: t[1].best_score_)
 winner = winner_search.best_estimator_
-print(f"\n>>> Winner by CV AUC: {winner_name} (AUC={winner_search.best_score_:.4f})")
+print(f"\n>>> Winner by TRAIN CV AUC: {winner_name} (AUC={winner_search.best_score_:.4f})")
 
-# Test-set evaluation
+# ---------- FINAL EVALUATION on EXTERNAL TEST_SET ----------
 if hasattr(winner, "predict_proba"):
     y_score = winner.predict_proba(X_te)[:, 1]
 else:
-    # fall back to decision_function if no predict_proba
     y_score = winner.decision_function(X_te)
 y_pred = winner.predict(X_te)
 
-test_auc = roc_auc_score(y_te, y_score)
-test_aupr = average_precision_score(y_te, y_score)
-test_acc = accuracy_score(y_te, y_pred)
-test_f1  = f1_score(y_te, y_pred)
+test_auc  = roc_auc_score(y_te_enc, y_score)
+test_aupr = average_precision_score(y_te_enc, y_score)
+test_acc  = accuracy_score(y_te_enc, y_pred)
+test_f1   = f1_score(y_te_enc, y_pred)
 
-print("\n=== Test-set metrics ===")
+print("\n=== External TEST_SET metrics ===")
 print(f"ROC AUC: {test_auc:.4f}")
 print(f"PR AUC:  {test_aupr:.4f}")
 print(f"Accuracy:{test_acc:.4f}")
 print(f"F1:      {test_f1:.4f}")
 
-# ---------------------------
-# Plots: ROC, PR, Confusion Matrix
-# ---------------------------
+# ---------- Plots for TEST_SET ----------
 fig, ax = plt.subplots(1, 3, figsize=(18, 5))
 
-RocCurveDisplay.from_predictions(y_te, y_score, name=winner_name, ax=ax[0])
-ax[0].set_title("ROC Curve")
+RocCurveDisplay.from_predictions(y_te_enc, y_score, name=winner_name, ax=ax[0])
+ax[0].set_title("ROC Curve (External TEST_SET)")
 
-PrecisionRecallDisplay.from_predictions(y_te, y_score, name=winner_name, ax=ax[1])
-ax[1].set_title("Precision-Recall Curve")
+PrecisionRecallDisplay.from_predictions(y_te_enc, y_score, name=winner_name, ax=ax[1])
+ax[1].set_title("Precision-Recall Curve (External TEST_SET)")
 
-ConfusionMatrixDisplay.from_predictions(y_te, y_pred, normalize="true", display_labels=le.classes_, ax=ax[2])
-ax[2].set_title("Confusion Matrix (normalized)")
+ConfusionMatrixDisplay.from_predictions(
+    y_te_enc, y_pred, normalize="true",
+    display_labels=le.classes_, ax=ax[2]
+)
+ax[2].set_title("Confusion Matrix (normalized, External TEST_SET)")
 plt.tight_layout()
 plt.show()
