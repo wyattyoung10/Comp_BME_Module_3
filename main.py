@@ -22,7 +22,7 @@ sns.set(context="notebook", style="whitegrid")
 
 # ==== EDIT THESE PATHS ====
 PATH_META = "GSE62944_metadata.csv"
-PATH_EXPR = "C:/Users/james/OneDrive/Documents/GitHub/Comp_BME_Module_3/Comp_BME_Module_3/GSE62944_subsample_log2TPM.csv"
+PATH_EXPR = "/Users/wyattyoung/Desktop/GSE62944_subsample_log2TPM.csv"
 
 # Choose your gene set
 ANGIO_GENES = ["VEGFA", "HIF1A", "ANGPT2", "FLT1"]
